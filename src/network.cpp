@@ -469,3 +469,9 @@ void serviceNetwork()
   server.handleClient();
   logWiFiStatusChanges();
 }
+
+NetworkStatus getNetworkStatus()
+{
+  const bool connected = WiFi.status() == WL_CONNECTED;
+  return {connected, connected ? WiFi.RSSI() : 0};
+}

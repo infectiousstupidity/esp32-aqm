@@ -50,9 +50,10 @@ constexpr bool SCD41_AUTOMATIC_SELF_CALIBRATION = true;
 constexpr float SCD41_PRESSURE_MIN_PA = 70000.0f;
 constexpr float SCD41_PRESSURE_MAX_PA = 120000.0f;
 
-// BME280 measurement range is 300-1100 hPa (30000-110000 Pa).
-constexpr float BME280_PRESSURE_MIN_HPA = 300.0f;
-constexpr float BME280_PRESSURE_MAX_HPA = 1100.0f;
+// Adafruit_BME280::readPressure() returns pascals. The BME280 measurement
+// range is 30000-110000 Pa (300-1100 hPa).
+constexpr float BME280_PRESSURE_MIN_PA = 30000.0f;
+constexpr float BME280_PRESSURE_MAX_PA = 110000.0f;
 
 Adafruit_BME280 bme;
 SensirionI2cScd4x scd4x;
@@ -288,12 +289,12 @@ SensorReadResult readBME280(
 {
   const float temperature = bme.readTemperature();
   const float humidity = bme.readHumidity();
-  const float pressureHpa = bme.readPressure();
+  const float pressurePa = bme.readPressure();
 
   // A non-finite value means the I2C read itself failed.
   if (!isfinite(temperature) ||
       !isfinite(humidity) ||
-      !isfinite(pressureHpa))
+      !isfinite(pressurePa))
   {
     return SensorReadResult::Error;
   }
@@ -303,8 +304,8 @@ SensorReadResult readBME280(
       temperature > 85.0f ||
       humidity < 0.0f ||
       humidity > 100.0f ||
-      pressureHpa < BME280_PRESSURE_MIN_HPA ||
-      pressureHpa > BME280_PRESSURE_MAX_HPA)
+      pressurePa < BME280_PRESSURE_MIN_PA ||
+      pressurePa > BME280_PRESSURE_MAX_PA)
   {
     Serial.println("BME280 reading rejected");
     return SensorReadResult::NoData;
@@ -312,7 +313,7 @@ SensorReadResult readBME280(
 
   temperatureOut = temperature;
   humidityOut = humidity;
-  pressureOut = pressureHpa * 100.0f; // hPa -> Pa
+  pressureOut = pressurePa;
   return SensorReadResult::Success;
 }
 

@@ -13,7 +13,7 @@
 
 namespace
 {
-// Measurement and history are committed on this cadence.
+// Measurements are committed on this cadence.
 constexpr uint32_t MEASUREMENT_INTERVAL_MS = 30000;
 // The e-paper display refreshes on its own, slower cadence.
 constexpr uint32_t DISPLAY_INTERVAL_MS = 60000;
@@ -24,9 +24,6 @@ uint32_t last_display_ms = 0;
 void commitMeasurement()
 {
   updateSensors();
-
-  // Record the sample into history; this does not refresh the display.
-  recordDashboardSample(getSensorSnapshot());
 }
 } // namespace
 
@@ -78,8 +75,8 @@ void loop()
   {
     last_measurement_ms = now;
 
-    // Sensor reads and history commits are synchronous. HTTP requests
-    // arriving during this update are handled after it finishes.
+    // Sensor reads are synchronous. HTTP requests arriving during this
+    // update are handled after it finishes.
     commitMeasurement();
   }
 

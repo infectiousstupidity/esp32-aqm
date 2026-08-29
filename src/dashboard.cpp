@@ -19,7 +19,7 @@ constexpr int HISTORY_SIZE = 60;
 // Ghosting tuning: force a full refresh after this many partial refreshes.
 // Raise to reduce the frequency of the (slower) full refresh; lower to clear
 // accumulated ghosting sooner.
-constexpr int PARTIALS_BEFORE_FULL_REFRESH = 5;
+constexpr int PARTIALS_BEFORE_FULL_REFRESH = 2;
 
 constexpr int SCREEN_MARGIN = 8;
 constexpr int COLUMN_GAP = 12;

@@ -62,6 +62,7 @@ constexpr int STATUS_ERROR_MAX_WIDTH = WARNING_ICON_LEFT_X - STATUS_X - 3;
 constexpr int32_t WIFI_STRONG_MIN_RSSI_DBM = -67;
 constexpr int32_t WIFI_MEDIUM_MIN_RSSI_DBM = -75;
 constexpr uint32_t PERSISTENT_SENSOR_ERROR_COUNT = 3;
+constexpr uint32_t SCORE_DATA_STALE_AFTER_MS = 90000;
 
 constexpr int CARD_TOP_Y = 47;
 constexpr int CARD_WIDTH = 66;
@@ -93,6 +94,24 @@ enum class WifiSignal
   Weak,
   Medium,
   Strong,
+};
+
+enum class DashboardHealth
+{
+  Healthy,
+  NetworkOffline,
+  DataStale,
+  SensorError,
+};
+
+struct DashboardUiState
+{
+  DashboardHealth health;
+  WifiSignal wifiSignal;
+  bool co2Error;
+  bool pmError;
+  bool environmentError;
+  bool scoreDataStale;
 };
 
 constexpr ScoreAnchor CO2_SCORE_ANCHORS[] = {
@@ -204,6 +223,50 @@ bool hasPersistentError(const SensorHealth &health)
          health.consecutiveErrors >= PERSISTENT_SENSOR_ERROR_COUNT;
 }
 
+bool hasStaleScoreData(
+    const SensorHealth &health,
+    bool persistentError,
+    uint32_t now)
+{
+  return health.hasSample &&
+         !persistentError &&
+         now - health.lastSuccessMs > SCORE_DATA_STALE_AFTER_MS;
+}
+
+DashboardUiState resolveDashboardState(
+    const SensorSnapshot &snapshot,
+    const NetworkStatus &networkStatus,
+    uint32_t now)
+{
+  DashboardUiState state;
+  state.wifiSignal = wifiSignalForStatus(networkStatus);
+  state.co2Error = hasPersistentError(snapshot.scd41);
+  state.pmError = hasPersistentError(snapshot.sps30);
+  state.environmentError = hasPersistentError(snapshot.bme280);
+  state.scoreDataStale =
+      hasStaleScoreData(snapshot.scd41, state.co2Error, now) ||
+      hasStaleScoreData(snapshot.sps30, state.pmError, now);
+
+  if (state.co2Error || state.pmError || state.environmentError)
+  {
+    state.health = DashboardHealth::SensorError;
+  }
+  else if (state.scoreDataStale)
+  {
+    state.health = DashboardHealth::DataStale;
+  }
+  else if (state.wifiSignal == WifiSignal::Offline)
+  {
+    state.health = DashboardHealth::NetworkOffline;
+  }
+  else
+  {
+    state.health = DashboardHealth::Healthy;
+  }
+
+  return state;
+}
+
 const char *sensorErrorSubtitle(
     bool co2Error,
     bool pmError,
@@ -227,6 +290,25 @@ const char *sensorErrorSubtitle(
     return "ENV SENSOR ERROR";
 
   return nullptr;
+}
+
+const char *dashboardSubtitle(const DashboardUiState &state)
+{
+  switch (state.health)
+  {
+  case DashboardHealth::SensorError:
+    return sensorErrorSubtitle(
+        state.co2Error,
+        state.pmError,
+        state.environmentError);
+  case DashboardHealth::DataStale:
+    return "DATA STALE";
+  case DashboardHealth::NetworkOffline:
+    return "OFFLINE";
+  case DashboardHealth::Healthy:
+  default:
+    return "Home Air Quality";
+  }
 }
 
 void drawCenteredText(
@@ -442,9 +524,9 @@ void drawStatus(const char *label, int maxWidth)
   display.print(label);
 }
 
-void drawSubtitle(const char *subtitle, bool sensorError)
+void drawSubtitle(const char *subtitle, bool compact)
 {
-  if (sensorError)
+  if (compact)
   {
     // The exact sensor error labels need the compact built-in 5x7 font to
     // fit the 145-pixel subtitle area without abbreviation.
@@ -602,14 +684,15 @@ void beginDashboard()
 
 void drawDashboard(const SensorSnapshot &snapshot)
 {
-  const bool co2Error = hasPersistentError(snapshot.scd41);
-  const bool pmError = hasPersistentError(snapshot.sps30);
-  const bool environmentError = hasPersistentError(snapshot.bme280);
-  const char *errorSubtitle = sensorErrorSubtitle(
-      co2Error,
-      pmError,
-      environmentError);
-  const bool scoreAvailable = !co2Error && !pmError;
+  const NetworkStatus networkStatus = getNetworkStatus();
+  const DashboardUiState state = resolveDashboardState(
+      snapshot,
+      networkStatus,
+      millis());
+  const bool hasWarning =
+      state.health == DashboardHealth::SensorError ||
+      state.health == DashboardHealth::DataStale;
+  const bool scoreAvailable = !state.co2Error && !state.pmError;
 
   char co2String[8] = "N/A";
   char pm25String[10] = "N/A";
@@ -618,27 +701,29 @@ void drawDashboard(const SensorSnapshot &snapshot)
   const char *co2Unit = "ppm";
   const char *pm25Unit = "ug/m3";
 
-  if (co2Error)
+  if (state.co2Error)
   {
     strcpy(co2String, "--");
     co2Unit = "ERROR";
   }
-  else if (snapshot.co2Valid)
+  else if (snapshot.co2Valid ||
+           (state.scoreDataStale && snapshot.scd41.hasSample))
   {
     snprintf(co2String, sizeof(co2String), "%u", snapshot.co2);
   }
 
-  if (pmError)
+  if (state.pmError)
   {
     strcpy(pm25String, "--");
     pm25Unit = "ERROR";
   }
-  else if (snapshot.pmValid)
+  else if (snapshot.pmValid ||
+           (state.scoreDataStale && snapshot.sps30.hasSample))
   {
     snprintf(pm25String, sizeof(pm25String), "%.1f", snapshot.pm25);
   }
 
-  if (environmentError)
+  if (state.environmentError)
   {
     strcpy(temperatureString, "--");
     strcpy(humidityString, "--");
@@ -652,7 +737,7 @@ void drawDashboard(const SensorSnapshot &snapshot)
         snapshot.temperature);
   }
 
-  if (!environmentError && snapshot.humidityValid)
+  if (!state.environmentError && snapshot.humidityValid)
   {
     snprintf(
         humidityString,
@@ -664,8 +749,6 @@ void drawDashboard(const SensorSnapshot &snapshot)
   const uint8_t score = scoreAvailable
                             ? indoorAirScore(snapshot.co2, snapshot.pm25)
                             : 0;
-  const NetworkStatus networkStatus = getNetworkStatus();
-  const WifiSignal wifiSignal = wifiSignalForStatus(networkStatus);
   char scoreString[4];
   if (scoreAvailable)
   {
@@ -706,21 +789,15 @@ void drawDashboard(const SensorSnapshot &snapshot)
 
     drawStatus(
         scoreAvailable ? scoreLabel(score) : "DEGRADED",
-        errorSubtitle == nullptr
-            ? STATUS_MAX_WIDTH
-            : STATUS_ERROR_MAX_WIDTH);
-    if (errorSubtitle != nullptr)
+        hasWarning ? STATUS_ERROR_MAX_WIDTH : STATUS_MAX_WIDTH);
+    if (hasWarning)
     {
       drawWarningIcon();
     }
-    drawWifiIcon(wifiSignal);
+    drawWifiIcon(state.wifiSignal);
     drawSubtitle(
-        errorSubtitle != nullptr
-            ? errorSubtitle
-            : wifiSignal == WifiSignal::Offline
-                  ? "OFFLINE"
-                  : "Home Air Quality",
-        errorSubtitle != nullptr);
+        dashboardSubtitle(state),
+        state.health == DashboardHealth::SensorError);
 
     drawMetricCard("CO2", co2String, co2Unit, STATUS_X);
     drawMetricCard(
@@ -731,7 +808,7 @@ void drawDashboard(const SensorSnapshot &snapshot)
 
     display.drawLine(7, FOOTER_LINE_Y, 243, FOOTER_LINE_Y, GxEPD_BLACK);
     drawThermometerIcon();
-    drawTemperature(temperatureString, !environmentError);
+    drawTemperature(temperatureString, !state.environmentError);
     drawDropletIcon();
     drawHumidity(humidityString);
   } while (display.nextPage());

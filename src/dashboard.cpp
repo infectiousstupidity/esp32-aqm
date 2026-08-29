@@ -50,9 +50,18 @@ constexpr int WIFI_ICON_TOP_Y = 2;
 constexpr int WIFI_ICON_BOTTOM_Y = 20;
 constexpr int STATUS_MAX_WIDTH = WIFI_ICON_LEFT_X - STATUS_X - 3;
 constexpr int SUBTITLE_BASELINE_Y = 40;
+constexpr int SENSOR_ERROR_SUBTITLE_TOP_Y = 31;
+
+constexpr int WARNING_ICON_LEFT_X = 211;
+constexpr int WARNING_ICON_CENTER_X = 219;
+constexpr int WARNING_ICON_RIGHT_X = 227;
+constexpr int WARNING_ICON_TOP_Y = 3;
+constexpr int WARNING_ICON_BOTTOM_Y = 20;
+constexpr int STATUS_ERROR_MAX_WIDTH = WARNING_ICON_LEFT_X - STATUS_X - 3;
 
 constexpr int32_t WIFI_STRONG_MIN_RSSI_DBM = -67;
 constexpr int32_t WIFI_MEDIUM_MIN_RSSI_DBM = -75;
+constexpr uint32_t PERSISTENT_SENSOR_ERROR_COUNT = 3;
 
 constexpr int CARD_TOP_Y = 47;
 constexpr int CARD_WIDTH = 66;
@@ -187,6 +196,37 @@ WifiSignal wifiSignalForStatus(const NetworkStatus &status)
     return WifiSignal::Medium;
 
   return WifiSignal::Weak;
+}
+
+bool hasPersistentError(const SensorHealth &health)
+{
+  return !health.running ||
+         health.consecutiveErrors >= PERSISTENT_SENSOR_ERROR_COUNT;
+}
+
+const char *sensorErrorSubtitle(
+    bool co2Error,
+    bool pmError,
+    bool environmentError)
+{
+  const int errorCount =
+      (co2Error ? 1 : 0) +
+      (pmError ? 1 : 0) +
+      (environmentError ? 1 : 0);
+
+  if (errorCount > 1)
+    return "SENSOR ERROR";
+
+  if (co2Error)
+    return "CO2 SENSOR ERROR";
+
+  if (pmError)
+    return "PM SENSOR ERROR";
+
+  if (environmentError)
+    return "ENV SENSOR ERROR";
+
+  return nullptr;
 }
 
 void drawCenteredText(
@@ -353,7 +393,30 @@ void drawWifiIcon(WifiSignal signal)
   }
 }
 
-void drawStatus(const char *label)
+void drawWarningIcon()
+{
+  display.drawTriangle(
+      WARNING_ICON_CENTER_X,
+      WARNING_ICON_TOP_Y,
+      WARNING_ICON_LEFT_X,
+      WARNING_ICON_BOTTOM_Y,
+      WARNING_ICON_RIGHT_X,
+      WARNING_ICON_BOTTOM_Y,
+      GxEPD_BLACK);
+  display.drawLine(
+      WARNING_ICON_CENTER_X,
+      WARNING_ICON_TOP_Y + 5,
+      WARNING_ICON_CENTER_X,
+      WARNING_ICON_BOTTOM_Y - 5,
+      GxEPD_BLACK);
+  display.fillCircle(
+      WARNING_ICON_CENTER_X,
+      WARNING_ICON_BOTTOM_Y - 2,
+      1,
+      GxEPD_BLACK);
+}
+
+void drawStatus(const char *label, int maxWidth)
 {
   int16_t boundsX;
   int16_t boundsY;
@@ -370,13 +433,32 @@ void drawStatus(const char *label)
       &boundsW,
       &boundsH);
 
-  if ((int)boundsW > STATUS_MAX_WIDTH)
+  if ((int)boundsW > maxWidth)
   {
     display.setFont(&FreeSansBold9pt7b);
   }
 
   display.setCursor(STATUS_X, STATUS_BASELINE_Y);
   display.print(label);
+}
+
+void drawSubtitle(const char *subtitle, bool sensorError)
+{
+  if (sensorError)
+  {
+    // The exact sensor error labels need the compact built-in 5x7 font to
+    // fit the 145-pixel subtitle area without abbreviation.
+    display.setFont(nullptr);
+    display.setTextSize(1);
+    display.setCursor(STATUS_X, SENSOR_ERROR_SUBTITLE_TOP_Y);
+  }
+  else
+  {
+    display.setFont(&FreeSans9pt7b);
+    display.setCursor(STATUS_X, SUBTITLE_BASELINE_Y);
+  }
+
+  display.print(subtitle);
 }
 
 void drawMetricCard(
@@ -471,11 +553,14 @@ void drawDropletIcon()
       GxEPD_BLACK);
 }
 
-void drawTemperature(const char *temperature)
+void drawTemperature(const char *temperature, bool showUnit)
 {
   display.setFont(&FreeSansBold12pt7b);
   display.setCursor(TEMPERATURE_X, FOOTER_BASELINE_Y);
   display.print(temperature);
+
+  if (!showUnit)
+    return;
 
   const int textEndX = display.getCursorX();
   display.drawCircle(textEndX + 3, FOOTER_BASELINE_Y - 15, 2, GxEPD_BLACK);
@@ -517,22 +602,48 @@ void beginDashboard()
 
 void drawDashboard(const SensorSnapshot &snapshot)
 {
+  const bool co2Error = hasPersistentError(snapshot.scd41);
+  const bool pmError = hasPersistentError(snapshot.sps30);
+  const bool environmentError = hasPersistentError(snapshot.bme280);
+  const char *errorSubtitle = sensorErrorSubtitle(
+      co2Error,
+      pmError,
+      environmentError);
+  const bool scoreAvailable = !co2Error && !pmError;
+
   char co2String[8] = "N/A";
   char pm25String[10] = "N/A";
   char temperatureString[10] = "N/A";
   char humidityString[8] = "N/A";
+  const char *co2Unit = "ppm";
+  const char *pm25Unit = "ug/m3";
 
-  if (snapshot.co2Valid)
+  if (co2Error)
+  {
+    strcpy(co2String, "--");
+    co2Unit = "ERROR";
+  }
+  else if (snapshot.co2Valid)
   {
     snprintf(co2String, sizeof(co2String), "%u", snapshot.co2);
   }
 
-  if (snapshot.pmValid)
+  if (pmError)
+  {
+    strcpy(pm25String, "--");
+    pm25Unit = "ERROR";
+  }
+  else if (snapshot.pmValid)
   {
     snprintf(pm25String, sizeof(pm25String), "%.1f", snapshot.pm25);
   }
 
-  if (snapshot.temperatureValid)
+  if (environmentError)
+  {
+    strcpy(temperatureString, "--");
+    strcpy(humidityString, "--");
+  }
+  else if (snapshot.temperatureValid)
   {
     snprintf(
         temperatureString,
@@ -541,7 +652,7 @@ void drawDashboard(const SensorSnapshot &snapshot)
         snapshot.temperature);
   }
 
-  if (snapshot.humidityValid)
+  if (!environmentError && snapshot.humidityValid)
   {
     snprintf(
         humidityString,
@@ -550,11 +661,20 @@ void drawDashboard(const SensorSnapshot &snapshot)
         snapshot.humidity);
   }
 
-  const uint8_t score = indoorAirScore(snapshot.co2, snapshot.pm25);
+  const uint8_t score = scoreAvailable
+                            ? indoorAirScore(snapshot.co2, snapshot.pm25)
+                            : 0;
   const NetworkStatus networkStatus = getNetworkStatus();
   const WifiSignal wifiSignal = wifiSignalForStatus(networkStatus);
   char scoreString[4];
-  snprintf(scoreString, sizeof(scoreString), "%u", score);
+  if (scoreAvailable)
+  {
+    snprintf(scoreString, sizeof(scoreString), "%u", score);
+  }
+  else
+  {
+    strcpy(scoreString, "--");
+  }
 
   // Full refresh on the first draw and after PARTIALS_BEFORE_FULL_REFRESH
   // partial refreshes (ghosting tuning); partial refresh otherwise.
@@ -584,25 +704,34 @@ void drawDashboard(const SensorSnapshot &snapshot)
         SCORE_BASELINE_Y,
         &FreeSansBold18pt7b);
 
-    drawStatus(scoreLabel(score));
+    drawStatus(
+        scoreAvailable ? scoreLabel(score) : "DEGRADED",
+        errorSubtitle == nullptr
+            ? STATUS_MAX_WIDTH
+            : STATUS_ERROR_MAX_WIDTH);
+    if (errorSubtitle != nullptr)
+    {
+      drawWarningIcon();
+    }
     drawWifiIcon(wifiSignal);
-    display.setFont(&FreeSans9pt7b);
-    display.setCursor(STATUS_X, SUBTITLE_BASELINE_Y);
-    display.print(
-        wifiSignal == WifiSignal::Offline
-            ? "OFFLINE"
-            : "Home Air Quality");
+    drawSubtitle(
+        errorSubtitle != nullptr
+            ? errorSubtitle
+            : wifiSignal == WifiSignal::Offline
+                  ? "OFFLINE"
+                  : "Home Air Quality",
+        errorSubtitle != nullptr);
 
-    drawMetricCard("CO2", co2String, "ppm", STATUS_X);
+    drawMetricCard("CO2", co2String, co2Unit, STATUS_X);
     drawMetricCard(
         "PM2.5",
         pm25String,
-        "ug/m3",
+        pm25Unit,
         STATUS_X + CARD_WIDTH + CARD_GAP);
 
     display.drawLine(7, FOOTER_LINE_Y, 243, FOOTER_LINE_Y, GxEPD_BLACK);
     drawThermometerIcon();
-    drawTemperature(temperatureString);
+    drawTemperature(temperatureString, !environmentError);
     drawDropletIcon();
     drawHumidity(humidityString);
   } while (display.nextPage());

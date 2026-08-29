@@ -7,9 +7,9 @@ namespace
 {
 // Timeout in seconds. Must exceed the worst-case blocking operation in the
 // cooperative loop: a full e-paper refresh (~3600 ms) plus the worst expected
-// sensor transaction. 20 s leaves wide margin above that, so normal full and
-// partial refreshes never trip the watchdog, while a genuinely stuck loop
-// resets the chip within 20 s.
+// sensor transaction. 20 s leaves wide margin above that, so normal full
+// refreshes never trip the watchdog, while a genuinely stuck loop resets the
+// chip within 20 s.
 constexpr uint32_t WATCHDOG_TIMEOUT_S = 20;
 
 // Compile-time test hook for hardware validation only. When true, the feed is

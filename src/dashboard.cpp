@@ -4,6 +4,7 @@
 #include <GxEPD2_BW.h>
 
 #include <Fonts/FreeSans9pt7b.h>
+#include <Fonts/FreeSansBold9pt7b.h>
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSansBold18pt7b.h>
 
@@ -14,26 +15,75 @@ constexpr uint8_t EPD_DC = 19;
 constexpr uint8_t EPD_RST = 2;
 constexpr uint8_t EPD_BUSY = 4;
 
-constexpr int HISTORY_SIZE = 60;
-
 // Ghosting tuning: force a full refresh after this many partial refreshes.
 // Raise to reduce the frequency of the (slower) full refresh; lower to clear
 // accumulated ghosting sooner.
 constexpr int PARTIALS_BEFORE_FULL_REFRESH = 2;
 
-constexpr int SCREEN_MARGIN = 8;
-constexpr int COLUMN_GAP = 12;
-constexpr int LABEL_BASELINE_Y = 15;
-constexpr int VALUE_BASELINE_Y = 44;
-constexpr int UNIT_BASELINE_Y = 59;
-constexpr int GRAPH_Y = 68;
-constexpr int GRAPH_H = 29;
-constexpr int FOOTER_BASELINE_Y = 117;
+constexpr float PI_RADIANS = 3.14159265f;
+constexpr int SCORE_RING_CENTER_X = 51;
+constexpr int SCORE_RING_CENTER_Y = 48;
+constexpr int SCORE_RING_OUTER_RADIUS = 44;
+constexpr int SCORE_RING_INNER_RADIUS = 39;
+constexpr int SCORE_RING_DOT_RADIUS = 42;
+constexpr int SCORE_RING_SEGMENTS = 60;
+constexpr float SCORE_RING_START_RADIANS = -PI_RADIANS / 2.0f;
+constexpr float SCORE_RING_STEP_RADIANS =
+    (2.0f * PI_RADIANS) / SCORE_RING_SEGMENTS;
 
-constexpr float CO2_GRAPH_MIN = 400.0f;
-constexpr float CO2_GRAPH_MAX = 2000.0f;
-constexpr float PM25_GRAPH_MIN = 0.0f;
-constexpr float PM25_GRAPH_MAX = 50.0f;
+constexpr int HOUSE_CENTER_X = SCORE_RING_CENTER_X;
+constexpr int HOUSE_ROOF_Y = 14;
+constexpr int HOUSE_WALL_TOP_Y = 20;
+constexpr int HOUSE_WALL_BOTTOM_Y = 27;
+constexpr int HOUSE_HALF_WIDTH = 7;
+
+constexpr int SCORE_BASELINE_Y = 65;
+constexpr int STATUS_X = 105;
+constexpr int STATUS_BASELINE_Y = 21;
+constexpr int STATUS_MAX_WIDTH = 138;
+constexpr int SUBTITLE_BASELINE_Y = 40;
+
+constexpr int CARD_TOP_Y = 47;
+constexpr int CARD_WIDTH = 66;
+constexpr int CARD_HEIGHT = 46;
+constexpr int CARD_GAP = 6;
+constexpr int CARD_LABEL_BASELINE_Y = 61;
+constexpr int CARD_VALUE_BASELINE_Y = 81;
+constexpr int CARD_UNIT_TOP_Y = 84;
+constexpr int CARD_INSET = 5;
+
+constexpr int FOOTER_LINE_Y = 98;
+constexpr int FOOTER_BASELINE_Y = 120;
+constexpr int THERMOMETER_X = 14;
+constexpr int THERMOMETER_TOP_Y = 104;
+constexpr int TEMPERATURE_X = 25;
+constexpr int DROPLET_CENTER_X = 163;
+constexpr int DROPLET_TOP_Y = 103;
+constexpr int HUMIDITY_RIGHT_X = 242;
+
+struct ScoreAnchor
+{
+  float value;
+  uint8_t score;
+};
+
+constexpr ScoreAnchor CO2_SCORE_ANCHORS[] = {
+    {600.0f, 100},
+    {800.0f, 90},
+    {1000.0f, 75},
+    {1400.0f, 50},
+    {2000.0f, 25},
+    {3000.0f, 0},
+};
+
+constexpr ScoreAnchor PM25_SCORE_ANCHORS[] = {
+    {5.0f, 100},
+    {10.0f, 90},
+    {15.0f, 75},
+    {25.0f, 50},
+    {50.0f, 25},
+    {100.0f, 0},
+};
 
 GxEPD2_BW<GxEPD2_213_B74, GxEPD2_213_B74::HEIGHT> display(
     GxEPD2_213_B74(
@@ -42,138 +92,82 @@ GxEPD2_BW<GxEPD2_213_B74, GxEPD2_213_B74::HEIGHT> display(
         EPD_RST,
         EPD_BUSY));
 
-// One slot per scheduled measurement interval. Invalid samples still occupy a
-// slot but are marked invalid, so the sparkline renders a gap instead of
-// shifting the graph's time axis.
-struct HistorySlot
-{
-  float value = NAN;
-  bool valid = false;
-};
-
-HistorySlot co2_history[HISTORY_SIZE];
-HistorySlot pm25_history[HISTORY_SIZE];
-int co2_history_count = 0;
-int pm25_history_count = 0;
-
 // Partial refreshes since the last full refresh. Starts at the threshold so
 // the first draw after init is a full refresh.
 int partials_since_full = PARTIALS_BEFORE_FULL_REFRESH;
 
-void appendHistory(HistorySlot *history, int &count, float value, bool valid)
-{
-  if (count < HISTORY_SIZE)
-  {
-    history[count].value = value;
-    history[count].valid = valid;
-    count++;
-    return;
-  }
-
-  for (int i = 0; i < HISTORY_SIZE - 1; i++)
-  {
-    history[i] = history[i + 1];
-  }
-
-  history[HISTORY_SIZE - 1].value = value;
-  history[HISTORY_SIZE - 1].valid = valid;
-}
-
-float clampFloat(float value, float minValue, float maxValue)
-{
-  if (value < minValue)
-    return minValue;
-
-  if (value > maxValue)
-    return maxValue;
-
-  return value;
-}
-
-int graphYForValue(
+uint8_t interpolateScore(
     float value,
-    float minValue,
-    float maxValue,
-    int y,
-    int h)
+    const ScoreAnchor *anchors,
+    size_t anchorCount)
 {
-  value = clampFloat(value, minValue, maxValue);
-  const float normalized = (value - minValue) / (maxValue - minValue);
+  if (isnan(value))
+    return 0;
 
-  return y + h - 1 -
-         (int)roundf(normalized * (float)(h - 1));
-}
+  if (value <= anchors[0].value)
+    return anchors[0].score;
 
-void drawSparkline(
-    const HistorySlot *history,
-    int count,
-    int x,
-    int y,
-    int w,
-    int h,
-    float minValue,
-    float maxValue)
-{
-  if (count <= 0)
-    return;
-
-  const float step = (float)(w - 1) / (float)(HISTORY_SIZE - 1);
-  const int historyOffset = HISTORY_SIZE - count;
-
-  bool havePrevious = false;
-  int previousX = 0;
-  int previousY = 0;
-  int lastX = 0;
-  int lastY = 0;
-  bool haveLast = false;
-
-  for (int i = 0; i < count; i++)
+  for (size_t i = 1; i < anchorCount; i++)
   {
-    // Invalid slots are gaps: skip them and break the line so it is not
-    // connected across a missing interval.
-    if (!history[i].valid)
+    if (value <= anchors[i].value)
     {
-      havePrevious = false;
-      continue;
+      const ScoreAnchor &low = anchors[i - 1];
+      const ScoreAnchor &high = anchors[i];
+      const float position =
+          (value - low.value) / (high.value - low.value);
+      const float score =
+          low.score + position * (high.score - low.score);
+
+      return (uint8_t)roundf(score);
     }
-
-    const int historyIndex = historyOffset + i;
-    const int px = x + (int)roundf(historyIndex * step);
-    const int py = graphYForValue(
-        history[i].value, minValue, maxValue, y, h);
-
-    if (havePrevious)
-    {
-      display.drawLine(previousX, previousY, px, py, GxEPD_BLACK);
-    }
-
-    previousX = px;
-    previousY = py;
-    havePrevious = true;
-
-    lastX = px;
-    lastY = py;
-    haveLast = true;
   }
 
-  if (haveLast)
-  {
-    display.fillCircle(lastX, lastY, 1, GxEPD_BLACK);
-  }
+  return anchors[anchorCount - 1].score;
 }
 
-void drawPrimaryValue(
+uint8_t indoorAirScore(float co2, float pm25)
+{
+  const uint8_t co2Score = interpolateScore(
+      co2,
+      CO2_SCORE_ANCHORS,
+      sizeof(CO2_SCORE_ANCHORS) / sizeof(CO2_SCORE_ANCHORS[0]));
+  const uint8_t pm25Score = interpolateScore(
+      pm25,
+      PM25_SCORE_ANCHORS,
+      sizeof(PM25_SCORE_ANCHORS) / sizeof(PM25_SCORE_ANCHORS[0]));
+
+  return co2Score < pm25Score ? co2Score : pm25Score;
+}
+
+const char *scoreLabel(uint8_t score)
+{
+  if (score >= 90)
+    return "EXCELLENT";
+
+  if (score >= 75)
+    return "GOOD";
+
+  if (score >= 50)
+    return "MODERATE";
+
+  if (score >= 25)
+    return "POOR";
+
+  return "BAD";
+}
+
+void drawCenteredText(
     const char *text,
-    int x,
+    int centerX,
     int baselineY,
-    int maxWidth)
+    const GFXfont *font)
 {
   int16_t boundsX;
   int16_t boundsY;
   uint16_t boundsW;
   uint16_t boundsH;
 
-  display.setFont(&FreeSansBold18pt7b);
+  display.setFont(font);
   display.getTextBounds(
       text,
       0,
@@ -182,66 +176,225 @@ void drawPrimaryValue(
       &boundsY,
       &boundsW,
       &boundsH);
-
-  if ((int)boundsW > maxWidth)
-  {
-    display.setFont(&FreeSansBold12pt7b);
-  }
-
-  display.setCursor(x, baselineY);
+  display.setCursor(
+      centerX - boundsX - (int)boundsW / 2,
+      baselineY);
   display.print(text);
 }
 
-void drawMetricColumn(
+void drawScoreRing(uint8_t score)
+{
+  const int filledSegments =
+      (score * SCORE_RING_SEGMENTS + 50) / 100;
+
+  for (int i = 0; i < SCORE_RING_SEGMENTS; i++)
+  {
+    const float angle =
+        SCORE_RING_START_RADIANS + i * SCORE_RING_STEP_RADIANS;
+    const float cosine = cosf(angle);
+    const float sine = sinf(angle);
+
+    if (i < filledSegments)
+    {
+      const int innerX =
+          SCORE_RING_CENTER_X + (int)roundf(cosine * SCORE_RING_INNER_RADIUS);
+      const int innerY =
+          SCORE_RING_CENTER_Y + (int)roundf(sine * SCORE_RING_INNER_RADIUS);
+      const int outerX =
+          SCORE_RING_CENTER_X + (int)roundf(cosine * SCORE_RING_OUTER_RADIUS);
+      const int outerY =
+          SCORE_RING_CENTER_Y + (int)roundf(sine * SCORE_RING_OUTER_RADIUS);
+      display.drawLine(innerX, innerY, outerX, outerY, GxEPD_BLACK);
+    }
+    else
+    {
+      const int dotX =
+          SCORE_RING_CENTER_X + (int)roundf(cosine * SCORE_RING_DOT_RADIUS);
+      const int dotY =
+          SCORE_RING_CENTER_Y + (int)roundf(sine * SCORE_RING_DOT_RADIUS);
+      display.drawPixel(dotX, dotY, GxEPD_BLACK);
+    }
+  }
+}
+
+void drawHouseIcon()
+{
+  display.drawLine(
+      HOUSE_CENTER_X - HOUSE_HALF_WIDTH,
+      HOUSE_WALL_TOP_Y,
+      HOUSE_CENTER_X,
+      HOUSE_ROOF_Y,
+      GxEPD_BLACK);
+  display.drawLine(
+      HOUSE_CENTER_X,
+      HOUSE_ROOF_Y,
+      HOUSE_CENTER_X + HOUSE_HALF_WIDTH,
+      HOUSE_WALL_TOP_Y,
+      GxEPD_BLACK);
+  display.drawRect(
+      HOUSE_CENTER_X - HOUSE_HALF_WIDTH + 2,
+      HOUSE_WALL_TOP_Y,
+      (HOUSE_HALF_WIDTH - 2) * 2 + 1,
+      HOUSE_WALL_BOTTOM_Y - HOUSE_WALL_TOP_Y + 1,
+      GxEPD_BLACK);
+  display.drawRect(
+      HOUSE_CENTER_X - 2,
+      HOUSE_WALL_BOTTOM_Y - 4,
+      4,
+      5,
+      GxEPD_BLACK);
+}
+
+void drawStatus(const char *label)
+{
+  int16_t boundsX;
+  int16_t boundsY;
+  uint16_t boundsW;
+  uint16_t boundsH;
+
+  display.setFont(&FreeSansBold12pt7b);
+  display.getTextBounds(
+      label,
+      0,
+      0,
+      &boundsX,
+      &boundsY,
+      &boundsW,
+      &boundsH);
+
+  if ((int)boundsW > STATUS_MAX_WIDTH)
+  {
+    display.setFont(&FreeSansBold9pt7b);
+  }
+
+  display.setCursor(STATUS_X, STATUS_BASELINE_Y);
+  display.print(label);
+}
+
+void drawMetricCard(
     const char *label,
     const char *value,
     const char *unit,
-    int x,
-    int width)
+    int x)
 {
+  display.drawRoundRect(
+      x,
+      CARD_TOP_Y,
+      CARD_WIDTH,
+      CARD_HEIGHT,
+      3,
+      GxEPD_BLACK);
+
   display.setFont(&FreeSans9pt7b);
-  display.setCursor(x, LABEL_BASELINE_Y);
+  display.setCursor(x + CARD_INSET, CARD_LABEL_BASELINE_Y);
   display.print(label);
 
-  drawPrimaryValue(value, x, VALUE_BASELINE_Y, width);
-
-  display.setFont(&FreeSans9pt7b);
-  display.setCursor(x, UNIT_BASELINE_Y);
-  display.print(unit);
-}
-
-void drawTemperatureFooter(const char *temperature, int x, int baselineY)
-{
-  display.setFont(&FreeSans9pt7b);
-  display.setCursor(x, baselineY);
-  display.print(temperature);
-
-  const int textEndX = display.getCursorX();
-
-  // Degree symbol.
-  display.drawCircle(textEndX + 3, baselineY - 10, 2, GxEPD_BLACK);
-  display.setCursor(textEndX + 8, baselineY);
-  display.print("C");
-}
-
-void drawRightAlignedText(const char *text, int rightX, int baselineY)
-{
   int16_t boundsX;
   int16_t boundsY;
   uint16_t boundsW;
   uint16_t boundsH;
-
-  display.setFont(&FreeSans9pt7b);
+  display.setFont(&FreeSansBold12pt7b);
   display.getTextBounds(
-      text,
+      value,
       0,
       0,
       &boundsX,
       &boundsY,
       &boundsW,
       &boundsH);
-  display.setCursor(rightX - (int)boundsW, baselineY);
-  display.print(text);
+
+  const int valueMaxWidth = CARD_WIDTH - CARD_INSET * 2;
+  const GFXfont *valueFont = &FreeSansBold12pt7b;
+  if ((int)boundsW > valueMaxWidth)
+  {
+    valueFont = &FreeSansBold9pt7b;
+  }
+
+  drawCenteredText(
+      value,
+      x + CARD_WIDTH / 2,
+      CARD_VALUE_BASELINE_Y,
+      valueFont);
+
+  display.setFont(nullptr);
+  display.setTextSize(1);
+  display.setCursor(
+      x + (CARD_WIDTH - (int)strlen(unit) * 6) / 2,
+      CARD_UNIT_TOP_Y);
+  display.print(unit);
+}
+
+void drawThermometerIcon()
+{
+  display.drawRoundRect(
+      THERMOMETER_X,
+      THERMOMETER_TOP_Y,
+      5,
+      13,
+      2,
+      GxEPD_BLACK);
+  display.drawLine(
+      THERMOMETER_X + 2,
+      THERMOMETER_TOP_Y + 5,
+      THERMOMETER_X + 2,
+      THERMOMETER_TOP_Y + 12,
+      GxEPD_BLACK);
+  display.fillCircle(
+      THERMOMETER_X + 2,
+      THERMOMETER_TOP_Y + 13,
+      3,
+      GxEPD_BLACK);
+}
+
+void drawDropletIcon()
+{
+  display.fillTriangle(
+      DROPLET_CENTER_X,
+      DROPLET_TOP_Y,
+      DROPLET_CENTER_X - 5,
+      DROPLET_TOP_Y + 10,
+      DROPLET_CENTER_X + 5,
+      DROPLET_TOP_Y + 10,
+      GxEPD_BLACK);
+  display.fillCircle(
+      DROPLET_CENTER_X,
+      DROPLET_TOP_Y + 10,
+      5,
+      GxEPD_BLACK);
+}
+
+void drawTemperature(const char *temperature)
+{
+  display.setFont(&FreeSansBold12pt7b);
+  display.setCursor(TEMPERATURE_X, FOOTER_BASELINE_Y);
+  display.print(temperature);
+
+  const int textEndX = display.getCursorX();
+  display.drawCircle(textEndX + 3, FOOTER_BASELINE_Y - 15, 2, GxEPD_BLACK);
+  display.setCursor(textEndX + 8, FOOTER_BASELINE_Y);
+  display.print("C");
+}
+
+void drawHumidity(const char *humidity)
+{
+  int16_t boundsX;
+  int16_t boundsY;
+  uint16_t boundsW;
+  uint16_t boundsH;
+
+  display.setFont(&FreeSansBold12pt7b);
+  display.getTextBounds(
+      humidity,
+      0,
+      0,
+      &boundsX,
+      &boundsY,
+      &boundsW,
+      &boundsH);
+  display.setCursor(
+      HUMIDITY_RIGHT_X - boundsX - (int)boundsW,
+      FOOTER_BASELINE_Y);
+  display.print(humidity);
 }
 } // namespace
 
@@ -254,22 +407,12 @@ void beginDashboard()
   partials_since_full = PARTIALS_BEFORE_FULL_REFRESH;
 }
 
-void recordDashboardSample(const SensorSnapshot &snapshot)
-{
-  // Every scheduled interval occupies one slot, even when invalid, so the
-  // graph's time axis is not compressed by missing samples.
-  appendHistory(
-      co2_history, co2_history_count, snapshot.co2, snapshot.co2Valid);
-  appendHistory(
-      pm25_history, pm25_history_count, snapshot.pm25, snapshot.pmValid);
-}
-
 void drawDashboard(const SensorSnapshot &snapshot)
 {
   char co2String[8] = "N/A";
   char pm25String[10] = "N/A";
   char temperatureString[10] = "N/A";
-  char humidityString[12] = "N/A";
+  char humidityString[8] = "N/A";
 
   if (snapshot.co2Valid)
   {
@@ -295,15 +438,13 @@ void drawDashboard(const SensorSnapshot &snapshot)
     snprintf(
         humidityString,
         sizeof(humidityString),
-        "%.0f%% RH",
+        "%.0f%%",
         snapshot.humidity);
   }
 
-  const int screenWidth = display.width();
-  const int usableWidth = screenWidth - (SCREEN_MARGIN * 2) - COLUMN_GAP;
-  const int columnWidth = usableWidth / 2;
-  const int leftX = SCREEN_MARGIN;
-  const int rightX = SCREEN_MARGIN + columnWidth + COLUMN_GAP;
+  const uint8_t score = indoorAirScore(snapshot.co2, snapshot.pm25);
+  char scoreString[4];
+  snprintf(scoreString, sizeof(scoreString), "%u", score);
 
   // Full refresh on the first draw and after PARTIALS_BEFORE_FULL_REFRESH
   // partial refreshes (ghosting tuning); partial refresh otherwise.
@@ -325,36 +466,30 @@ void drawDashboard(const SensorSnapshot &snapshot)
     display.fillScreen(GxEPD_WHITE);
     display.setTextColor(GxEPD_BLACK);
 
-    drawMetricColumn("CO2", co2String, "ppm", leftX, columnWidth);
-    drawMetricColumn("PM2.5", pm25String, "ug/m3", rightX, columnWidth);
+    drawScoreRing(score);
+    drawHouseIcon();
+    drawCenteredText(
+        scoreString,
+        SCORE_RING_CENTER_X,
+        SCORE_BASELINE_Y,
+        &FreeSansBold18pt7b);
 
-    drawSparkline(
-        co2_history,
-        co2_history_count,
-        leftX,
-        GRAPH_Y,
-        columnWidth,
-        GRAPH_H,
-        CO2_GRAPH_MIN,
-        CO2_GRAPH_MAX);
+    drawStatus(scoreLabel(score));
+    display.setFont(&FreeSans9pt7b);
+    display.setCursor(STATUS_X, SUBTITLE_BASELINE_Y);
+    display.print("Home Air Quality");
 
-    drawSparkline(
-        pm25_history,
-        pm25_history_count,
-        rightX,
-        GRAPH_Y,
-        columnWidth,
-        GRAPH_H,
-        PM25_GRAPH_MIN,
-        PM25_GRAPH_MAX);
+    drawMetricCard("CO2", co2String, "ppm", STATUS_X);
+    drawMetricCard(
+        "PM2.5",
+        pm25String,
+        "ug/m3",
+        STATUS_X + CARD_WIDTH + CARD_GAP);
 
-    drawTemperatureFooter(
-        temperatureString,
-        SCREEN_MARGIN,
-        FOOTER_BASELINE_Y);
-    drawRightAlignedText(
-        humidityString,
-        screenWidth - SCREEN_MARGIN,
-        FOOTER_BASELINE_Y);
+    display.drawLine(7, FOOTER_LINE_Y, 243, FOOTER_LINE_Y, GxEPD_BLACK);
+    drawThermometerIcon();
+    drawTemperature(temperatureString);
+    drawDropletIcon();
+    drawHumidity(humidityString);
   } while (display.nextPage());
 }

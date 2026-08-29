@@ -8,6 +8,8 @@
 #include <Fonts/FreeSansBold12pt7b.h>
 #include <Fonts/FreeSansBold18pt7b.h>
 
+#include "network.h"
+
 namespace
 {
 constexpr uint8_t EPD_CS = 5;
@@ -40,8 +42,17 @@ constexpr int HOUSE_HALF_WIDTH = 7;
 constexpr int SCORE_BASELINE_Y = 65;
 constexpr int STATUS_X = 105;
 constexpr int STATUS_BASELINE_Y = 21;
-constexpr int STATUS_MAX_WIDTH = 138;
+constexpr int WIFI_ICON_CENTER_X = 239;
+constexpr int WIFI_ICON_DOT_Y = 19;
+constexpr int WIFI_ICON_LEFT_X = 230;
+constexpr int WIFI_ICON_RIGHT_X = 248;
+constexpr int WIFI_ICON_TOP_Y = 2;
+constexpr int WIFI_ICON_BOTTOM_Y = 20;
+constexpr int STATUS_MAX_WIDTH = WIFI_ICON_LEFT_X - STATUS_X - 3;
 constexpr int SUBTITLE_BASELINE_Y = 40;
+
+constexpr int32_t WIFI_STRONG_MIN_RSSI_DBM = -67;
+constexpr int32_t WIFI_MEDIUM_MIN_RSSI_DBM = -75;
 
 constexpr int CARD_TOP_Y = 47;
 constexpr int CARD_WIDTH = 66;
@@ -65,6 +76,14 @@ struct ScoreAnchor
 {
   float value;
   uint8_t score;
+};
+
+enum class WifiSignal
+{
+  Offline,
+  Weak,
+  Medium,
+  Strong,
 };
 
 constexpr ScoreAnchor CO2_SCORE_ANCHORS[] = {
@@ -156,6 +175,20 @@ const char *scoreLabel(uint8_t score)
   return "BAD";
 }
 
+WifiSignal wifiSignalForStatus(const NetworkStatus &status)
+{
+  if (!status.connected)
+    return WifiSignal::Offline;
+
+  if (status.rssiDbm >= WIFI_STRONG_MIN_RSSI_DBM)
+    return WifiSignal::Strong;
+
+  if (status.rssiDbm >= WIFI_MEDIUM_MIN_RSSI_DBM)
+    return WifiSignal::Medium;
+
+  return WifiSignal::Weak;
+}
+
 void drawCenteredText(
     const char *text,
     int centerX,
@@ -243,6 +276,81 @@ void drawHouseIcon()
       4,
       5,
       GxEPD_BLACK);
+}
+
+void drawWifiArcs(int arcCount)
+{
+  if (arcCount >= 3)
+  {
+    display.drawLine(230, 9, 232, 6, GxEPD_BLACK);
+    display.drawLine(232, 6, 235, 4, GxEPD_BLACK);
+    display.drawLine(235, 4, WIFI_ICON_CENTER_X, 3, GxEPD_BLACK);
+    display.drawLine(WIFI_ICON_CENTER_X, 3, 243, 4, GxEPD_BLACK);
+    display.drawLine(243, 4, 246, 6, GxEPD_BLACK);
+    display.drawLine(246, 6, 248, 9, GxEPD_BLACK);
+  }
+
+  if (arcCount >= 2)
+  {
+    display.drawLine(233, 12, 235, 10, GxEPD_BLACK);
+    display.drawLine(235, 10, WIFI_ICON_CENTER_X, 8, GxEPD_BLACK);
+    display.drawLine(WIFI_ICON_CENTER_X, 8, 243, 10, GxEPD_BLACK);
+    display.drawLine(243, 10, 245, 12, GxEPD_BLACK);
+  }
+
+  if (arcCount >= 1)
+  {
+    display.drawLine(236, 15, WIFI_ICON_CENTER_X, 13, GxEPD_BLACK);
+    display.drawLine(WIFI_ICON_CENTER_X, 13, 242, 15, GxEPD_BLACK);
+  }
+
+  display.fillCircle(
+      WIFI_ICON_CENTER_X,
+      WIFI_ICON_DOT_Y,
+      1,
+      GxEPD_BLACK);
+}
+
+void drawWifiIcon(WifiSignal signal)
+{
+  if (signal == WifiSignal::Offline)
+  {
+    drawWifiArcs(3);
+
+    // Clear a narrow channel through the signal, then add a crisp slash.
+    display.drawLine(
+        WIFI_ICON_LEFT_X - 1,
+        WIFI_ICON_TOP_Y,
+        WIFI_ICON_RIGHT_X - 1,
+        WIFI_ICON_BOTTOM_Y,
+        GxEPD_WHITE);
+    display.drawLine(
+        WIFI_ICON_LEFT_X + 1,
+        WIFI_ICON_TOP_Y,
+        WIFI_ICON_RIGHT_X + 1,
+        WIFI_ICON_BOTTOM_Y,
+        GxEPD_WHITE);
+    display.drawLine(
+        WIFI_ICON_LEFT_X,
+        WIFI_ICON_TOP_Y,
+        WIFI_ICON_RIGHT_X,
+        WIFI_ICON_BOTTOM_Y,
+        GxEPD_BLACK);
+    return;
+  }
+
+  if (signal == WifiSignal::Strong)
+  {
+    drawWifiArcs(3);
+  }
+  else if (signal == WifiSignal::Medium)
+  {
+    drawWifiArcs(2);
+  }
+  else
+  {
+    drawWifiArcs(1);
+  }
 }
 
 void drawStatus(const char *label)
@@ -443,6 +551,8 @@ void drawDashboard(const SensorSnapshot &snapshot)
   }
 
   const uint8_t score = indoorAirScore(snapshot.co2, snapshot.pm25);
+  const NetworkStatus networkStatus = getNetworkStatus();
+  const WifiSignal wifiSignal = wifiSignalForStatus(networkStatus);
   char scoreString[4];
   snprintf(scoreString, sizeof(scoreString), "%u", score);
 
@@ -475,9 +585,13 @@ void drawDashboard(const SensorSnapshot &snapshot)
         &FreeSansBold18pt7b);
 
     drawStatus(scoreLabel(score));
+    drawWifiIcon(wifiSignal);
     display.setFont(&FreeSans9pt7b);
     display.setCursor(STATUS_X, SUBTITLE_BASELINE_Y);
-    display.print("Home Air Quality");
+    display.print(
+        wifiSignal == WifiSignal::Offline
+            ? "OFFLINE"
+            : "Home Air Quality");
 
     drawMetricCard("CO2", co2String, "ppm", STATUS_X);
     drawMetricCard(

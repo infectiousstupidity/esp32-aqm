@@ -24,57 +24,48 @@ constexpr int PARTIALS_BEFORE_FULL_REFRESH = 2;
 
 constexpr float PI_RADIANS = 3.14159265f;
 constexpr int SCORE_RING_CENTER_X = 51;
-constexpr int SCORE_RING_CENTER_Y = 48;
-constexpr int SCORE_RING_OUTER_RADIUS = 44;
-constexpr int SCORE_RING_INNER_RADIUS = 39;
-constexpr int SCORE_RING_DOT_RADIUS = 42;
+constexpr int SCORE_RING_CENTER_Y = 50;
+constexpr int SCORE_RING_OUTER_RADIUS = 42;
+constexpr int SCORE_RING_INNER_RADIUS = 35;
+constexpr int SCORE_RING_DOT_RADIUS = 39;
 constexpr int SCORE_RING_SEGMENTS = 60;
 constexpr float SCORE_RING_START_RADIANS = -PI_RADIANS / 2.0f;
 constexpr float SCORE_RING_STEP_RADIANS =
     (2.0f * PI_RADIANS) / SCORE_RING_SEGMENTS;
 
-constexpr int HOUSE_CENTER_X = SCORE_RING_CENTER_X;
-constexpr int HOUSE_ROOF_Y = 14;
-constexpr int HOUSE_WALL_TOP_Y = 20;
-constexpr int HOUSE_WALL_BOTTOM_Y = 27;
-constexpr int HOUSE_HALF_WIDTH = 7;
+constexpr int SCORE_BASELINE_Y = 61;
+constexpr int STATUS_X = 96;
+constexpr int STATUS_BASELINE_Y = 20;
+constexpr int WIFI_ICON_CENTER_X = 233;
+constexpr int WIFI_ICON_DOT_Y = 22;
+constexpr int WIFI_ICON_LEFT_X = 224;
+constexpr int WIFI_ICON_RIGHT_X = 242;
+constexpr int WIFI_ICON_TOP_Y = 5;
+constexpr int WIFI_ICON_BOTTOM_Y = 23;
+constexpr int SUBTITLE_BASELINE_Y = 35;
+constexpr int SENSOR_ERROR_SUBTITLE_TOP_Y = 28;
 
-constexpr int SCORE_BASELINE_Y = 65;
-constexpr int STATUS_X = 105;
-constexpr int STATUS_BASELINE_Y = 21;
-constexpr int WIFI_ICON_CENTER_X = 239;
-constexpr int WIFI_ICON_DOT_Y = 19;
-constexpr int WIFI_ICON_LEFT_X = 230;
-constexpr int WIFI_ICON_RIGHT_X = 248;
-constexpr int WIFI_ICON_TOP_Y = 2;
-constexpr int WIFI_ICON_BOTTOM_Y = 20;
-constexpr int STATUS_MAX_WIDTH = WIFI_ICON_LEFT_X - STATUS_X - 3;
-constexpr int SUBTITLE_BASELINE_Y = 40;
-constexpr int SENSOR_ERROR_SUBTITLE_TOP_Y = 31;
-
-constexpr int WARNING_ICON_LEFT_X = 211;
-constexpr int WARNING_ICON_CENTER_X = 219;
-constexpr int WARNING_ICON_RIGHT_X = 227;
-constexpr int WARNING_ICON_TOP_Y = 3;
-constexpr int WARNING_ICON_BOTTOM_Y = 20;
-constexpr int STATUS_ERROR_MAX_WIDTH = WARNING_ICON_LEFT_X - STATUS_X - 3;
+constexpr int WARNING_ICON_LEFT_X = 205;
+constexpr int WARNING_ICON_CENTER_X = 213;
+constexpr int WARNING_ICON_RIGHT_X = 221;
+constexpr int WARNING_ICON_TOP_Y = 6;
+constexpr int WARNING_ICON_BOTTOM_Y = 23;
 
 constexpr int32_t WIFI_STRONG_MIN_RSSI_DBM = -67;
 constexpr int32_t WIFI_MEDIUM_MIN_RSSI_DBM = -75;
 constexpr uint32_t PERSISTENT_SENSOR_ERROR_COUNT = 3;
 constexpr uint32_t SCORE_DATA_STALE_AFTER_MS = 90000;
 
-constexpr int CARD_TOP_Y = 47;
-constexpr int CARD_WIDTH = 66;
-constexpr int CARD_HEIGHT = 46;
-constexpr int CARD_GAP = 6;
-constexpr int CARD_LABEL_BASELINE_Y = 61;
-constexpr int CARD_VALUE_BASELINE_Y = 81;
-constexpr int CARD_UNIT_TOP_Y = 84;
-constexpr int CARD_INSET = 5;
+constexpr int LEFT_METRIC_X = 108;
+constexpr int LEFT_METRIC_WIDTH = 58;
+constexpr int RIGHT_METRIC_X = 178;
+constexpr int RIGHT_METRIC_WIDTH = 64;
+constexpr int METRIC_LABEL_BASELINE_Y = 50;
+constexpr int METRIC_VALUE_BASELINE_Y = 74;
+constexpr int METRIC_UNIT_TOP_Y = 81;
 
-constexpr int FOOTER_LINE_Y = 98;
-constexpr int FOOTER_BASELINE_Y = 120;
+constexpr int FOOTER_LINE_Y = 97;
+constexpr int FOOTER_BASELINE_Y = 119;
 constexpr int THERMOMETER_X = 14;
 constexpr int THERMOMETER_TOP_Y = 104;
 constexpr int TEMPERATURE_X = 25;
@@ -307,7 +298,7 @@ const char *dashboardSubtitle(const DashboardUiState &state)
     return "OFFLINE";
   case DashboardHealth::Healthy:
   default:
-    return "Home Air Quality";
+    return nullptr;
   }
 }
 
@@ -360,6 +351,11 @@ void drawScoreRing(uint8_t score)
       const int outerY =
           SCORE_RING_CENTER_Y + (int)roundf(sine * SCORE_RING_OUTER_RADIUS);
       display.drawLine(innerX, innerY, outerX, outerY, GxEPD_BLACK);
+      display.fillCircle(
+          (innerX + outerX) / 2,
+          (innerY + outerY) / 2,
+          1,
+          GxEPD_BLACK);
     }
     else
     {
@@ -372,58 +368,30 @@ void drawScoreRing(uint8_t score)
   }
 }
 
-void drawHouseIcon()
-{
-  display.drawLine(
-      HOUSE_CENTER_X - HOUSE_HALF_WIDTH,
-      HOUSE_WALL_TOP_Y,
-      HOUSE_CENTER_X,
-      HOUSE_ROOF_Y,
-      GxEPD_BLACK);
-  display.drawLine(
-      HOUSE_CENTER_X,
-      HOUSE_ROOF_Y,
-      HOUSE_CENTER_X + HOUSE_HALF_WIDTH,
-      HOUSE_WALL_TOP_Y,
-      GxEPD_BLACK);
-  display.drawRect(
-      HOUSE_CENTER_X - HOUSE_HALF_WIDTH + 2,
-      HOUSE_WALL_TOP_Y,
-      (HOUSE_HALF_WIDTH - 2) * 2 + 1,
-      HOUSE_WALL_BOTTOM_Y - HOUSE_WALL_TOP_Y + 1,
-      GxEPD_BLACK);
-  display.drawRect(
-      HOUSE_CENTER_X - 2,
-      HOUSE_WALL_BOTTOM_Y - 4,
-      4,
-      5,
-      GxEPD_BLACK);
-}
-
 void drawWifiArcs(int arcCount)
 {
   if (arcCount >= 3)
   {
-    display.drawLine(230, 9, 232, 6, GxEPD_BLACK);
-    display.drawLine(232, 6, 235, 4, GxEPD_BLACK);
-    display.drawLine(235, 4, WIFI_ICON_CENTER_X, 3, GxEPD_BLACK);
-    display.drawLine(WIFI_ICON_CENTER_X, 3, 243, 4, GxEPD_BLACK);
-    display.drawLine(243, 4, 246, 6, GxEPD_BLACK);
-    display.drawLine(246, 6, 248, 9, GxEPD_BLACK);
+    display.drawLine(224, 12, 226, 9, GxEPD_BLACK);
+    display.drawLine(226, 9, 229, 7, GxEPD_BLACK);
+    display.drawLine(229, 7, WIFI_ICON_CENTER_X, 6, GxEPD_BLACK);
+    display.drawLine(WIFI_ICON_CENTER_X, 6, 237, 7, GxEPD_BLACK);
+    display.drawLine(237, 7, 240, 9, GxEPD_BLACK);
+    display.drawLine(240, 9, 242, 12, GxEPD_BLACK);
   }
 
   if (arcCount >= 2)
   {
-    display.drawLine(233, 12, 235, 10, GxEPD_BLACK);
-    display.drawLine(235, 10, WIFI_ICON_CENTER_X, 8, GxEPD_BLACK);
-    display.drawLine(WIFI_ICON_CENTER_X, 8, 243, 10, GxEPD_BLACK);
-    display.drawLine(243, 10, 245, 12, GxEPD_BLACK);
+    display.drawLine(227, 15, 229, 13, GxEPD_BLACK);
+    display.drawLine(229, 13, WIFI_ICON_CENTER_X, 11, GxEPD_BLACK);
+    display.drawLine(WIFI_ICON_CENTER_X, 11, 237, 13, GxEPD_BLACK);
+    display.drawLine(237, 13, 239, 15, GxEPD_BLACK);
   }
 
   if (arcCount >= 1)
   {
-    display.drawLine(236, 15, WIFI_ICON_CENTER_X, 13, GxEPD_BLACK);
-    display.drawLine(WIFI_ICON_CENTER_X, 13, 242, 15, GxEPD_BLACK);
+    display.drawLine(230, 18, WIFI_ICON_CENTER_X, 16, GxEPD_BLACK);
+    display.drawLine(WIFI_ICON_CENTER_X, 16, 236, 18, GxEPD_BLACK);
   }
 
   display.fillCircle(
@@ -498,34 +466,18 @@ void drawWarningIcon()
       GxEPD_BLACK);
 }
 
-void drawStatus(const char *label, int maxWidth)
+void drawStatus(const char *label)
 {
-  int16_t boundsX;
-  int16_t boundsY;
-  uint16_t boundsW;
-  uint16_t boundsH;
-
-  display.setFont(&FreeSansBold12pt7b);
-  display.getTextBounds(
-      label,
-      0,
-      0,
-      &boundsX,
-      &boundsY,
-      &boundsW,
-      &boundsH);
-
-  if ((int)boundsW > maxWidth)
-  {
-    display.setFont(&FreeSansBold9pt7b);
-  }
-
+  display.setFont(&FreeSansBold9pt7b);
   display.setCursor(STATUS_X, STATUS_BASELINE_Y);
   display.print(label);
 }
 
 void drawSubtitle(const char *subtitle, bool compact)
 {
+  if (subtitle == nullptr)
+    return;
+
   if (compact)
   {
     // The exact sensor error labels need the compact built-in 5x7 font to
@@ -543,23 +495,18 @@ void drawSubtitle(const char *subtitle, bool compact)
   display.print(subtitle);
 }
 
-void drawMetricCard(
+void drawMetric(
     const char *label,
     const char *value,
     const char *unit,
-    int x)
+    int x,
+    int width)
 {
-  display.drawRoundRect(
-      x,
-      CARD_TOP_Y,
-      CARD_WIDTH,
-      CARD_HEIGHT,
-      3,
-      GxEPD_BLACK);
-
-  display.setFont(&FreeSans9pt7b);
-  display.setCursor(x + CARD_INSET, CARD_LABEL_BASELINE_Y);
-  display.print(label);
+  drawCenteredText(
+      label,
+      x + width / 2,
+      METRIC_LABEL_BASELINE_Y,
+      &FreeSans9pt7b);
 
   int16_t boundsX;
   int16_t boundsY;
@@ -575,7 +522,7 @@ void drawMetricCard(
       &boundsW,
       &boundsH);
 
-  const int valueMaxWidth = CARD_WIDTH - CARD_INSET * 2;
+  const int valueMaxWidth = width;
   const GFXfont *valueFont = &FreeSansBold12pt7b;
   if ((int)boundsW > valueMaxWidth)
   {
@@ -584,15 +531,15 @@ void drawMetricCard(
 
   drawCenteredText(
       value,
-      x + CARD_WIDTH / 2,
-      CARD_VALUE_BASELINE_Y,
+      x + width / 2,
+      METRIC_VALUE_BASELINE_Y,
       valueFont);
 
   display.setFont(nullptr);
   display.setTextSize(1);
   display.setCursor(
-      x + (CARD_WIDTH - (int)strlen(unit) * 6) / 2,
-      CARD_UNIT_TOP_Y);
+      x + (width - (int)strlen(unit) * 6) / 2,
+      METRIC_UNIT_TOP_Y);
   display.print(unit);
 }
 
@@ -637,7 +584,7 @@ void drawDropletIcon()
 
 void drawTemperature(const char *temperature, bool showUnit)
 {
-  display.setFont(&FreeSansBold12pt7b);
+  display.setFont(&FreeSansBold9pt7b);
   display.setCursor(TEMPERATURE_X, FOOTER_BASELINE_Y);
   display.print(temperature);
 
@@ -645,7 +592,7 @@ void drawTemperature(const char *temperature, bool showUnit)
     return;
 
   const int textEndX = display.getCursorX();
-  display.drawCircle(textEndX + 3, FOOTER_BASELINE_Y - 15, 2, GxEPD_BLACK);
+  display.drawCircle(textEndX + 3, FOOTER_BASELINE_Y - 11, 2, GxEPD_BLACK);
   display.setCursor(textEndX + 8, FOOTER_BASELINE_Y);
   display.print("C");
 }
@@ -657,7 +604,7 @@ void drawHumidity(const char *humidity)
   uint16_t boundsW;
   uint16_t boundsH;
 
-  display.setFont(&FreeSansBold12pt7b);
+  display.setFont(&FreeSansBold9pt7b);
   display.getTextBounds(
       humidity,
       0,
@@ -780,16 +727,13 @@ void drawDashboard(const SensorSnapshot &snapshot)
     display.setTextColor(GxEPD_BLACK);
 
     drawScoreRing(score);
-    drawHouseIcon();
     drawCenteredText(
         scoreString,
         SCORE_RING_CENTER_X,
         SCORE_BASELINE_Y,
         &FreeSansBold18pt7b);
 
-    drawStatus(
-        scoreAvailable ? scoreLabel(score) : "DEGRADED",
-        hasWarning ? STATUS_ERROR_MAX_WIDTH : STATUS_MAX_WIDTH);
+    drawStatus(scoreAvailable ? scoreLabel(score) : "DEGRADED");
     if (hasWarning)
     {
       drawWarningIcon();
@@ -799,12 +743,18 @@ void drawDashboard(const SensorSnapshot &snapshot)
         dashboardSubtitle(state),
         state.health == DashboardHealth::SensorError);
 
-    drawMetricCard("CO2", co2String, co2Unit, STATUS_X);
-    drawMetricCard(
+    drawMetric(
+        "CO2",
+        co2String,
+        co2Unit,
+        LEFT_METRIC_X,
+        LEFT_METRIC_WIDTH);
+    drawMetric(
         "PM2.5",
         pm25String,
         pm25Unit,
-        STATUS_X + CARD_WIDTH + CARD_GAP);
+        RIGHT_METRIC_X,
+        RIGHT_METRIC_WIDTH);
 
     display.drawLine(7, FOOTER_LINE_Y, 243, FOOTER_LINE_Y, GxEPD_BLACK);
     drawThermometerIcon();

@@ -17,11 +17,6 @@ constexpr uint8_t EPD_DC = 19;
 constexpr uint8_t EPD_RST = 2;
 constexpr uint8_t EPD_BUSY = 4;
 
-// Ghosting tuning: force a full refresh after this many partial refreshes.
-// Raise to reduce the frequency of the (slower) full refresh; lower to clear
-// accumulated ghosting sooner.
-constexpr int PARTIALS_BEFORE_FULL_REFRESH = 2;
-
 constexpr float PI_RADIANS = 3.14159265f;
 constexpr int SCORE_RING_CENTER_X = 51;
 constexpr int SCORE_RING_CENTER_Y = 50;
@@ -129,10 +124,6 @@ GxEPD2_BW<GxEPD2_213_B74, GxEPD2_213_B74::HEIGHT> display(
         EPD_DC,
         EPD_RST,
         EPD_BUSY));
-
-// Partial refreshes since the last full refresh. Starts at the threshold so
-// the first draw after init is a full refresh.
-int partials_since_full = PARTIALS_BEFORE_FULL_REFRESH;
 
 uint8_t interpolateScore(
     float value,
@@ -624,9 +615,6 @@ void beginDashboard()
 {
   display.init();
   display.setRotation(1);
-
-  // The first draw after init is a full refresh.
-  partials_since_full = PARTIALS_BEFORE_FULL_REFRESH;
 }
 
 void drawDashboard(const SensorSnapshot &snapshot)
@@ -706,19 +694,7 @@ void drawDashboard(const SensorSnapshot &snapshot)
     strcpy(scoreString, "--");
   }
 
-  // Full refresh on the first draw and after PARTIALS_BEFORE_FULL_REFRESH
-  // partial refreshes (ghosting tuning); partial refresh otherwise.
-  if (partials_since_full >= PARTIALS_BEFORE_FULL_REFRESH)
-  {
-    display.setFullWindow();
-    partials_since_full = 0;
-  }
-  else
-  {
-    display.setPartialWindow(0, 0, display.width(), display.height());
-    partials_since_full++;
-  }
-
+  display.setFullWindow();
   display.firstPage();
 
   do
@@ -762,4 +738,6 @@ void drawDashboard(const SensorSnapshot &snapshot)
     drawDropletIcon();
     drawHumidity(humidityString);
   } while (display.nextPage());
+
+  display.powerOff();
 }
